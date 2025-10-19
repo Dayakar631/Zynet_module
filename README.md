@@ -1,83 +1,117 @@
-# Zynet_module
-Deploying Your ZyNet Accelerator on PYNQ
-The process involves loading your custom-built hardware (the ZyNet module) onto the FPGA and then using the PYNQ framework to control it with Python. This combines high-performance hardware acceleration with high-level software simplicity.
+# End-to-End Design of a Hardware-Accelerated CNN on a Zynq SoC
 
-The Core Components
-ZyNet Module: This is your custom-built neural network accelerator, designed in hardware and implemented on the FPGA's Programmable Logic (PL). It contains all the necessary components like neuron arrays, internal weight/bias memories, and activation function logic to perform fast AI inference. * PYNQ Framework: An open-source framework from Xilinx that runs on the Zynq's ARM processor. It allows you to program and control the FPGA fabric using simple Python commands, abstracting away the low-level hardware complexity.
+This repository documents the complete design, training, verification, and deployment of a custom Convolutional Neural Network (CNN) hardware accelerator on a Xilinx Zynq-7000 SoC. The system is architected for high-performance, low-latency handwritten digit recognition and is controlled by the user-friendly PYNQ (Python Productivity for Zynq) framework, enabling seamless software-hardware interaction.
 
-The Overlay: This is the package that contains your hardware design. It consists of:
+---
 
-A .bit file (Bitstream): The raw binary data that physically configures the FPGA's logic gates to become your ZyNet accelerator.
+## 🚀 The Core Idea: Hybrid Computing with Zynq
 
-A .hwh file (Hardware Handoff): A metadata file that acts as a "map" for PYNQ, describing the components in your design, their addresses, and how to communicate with them.
+Modern AI applications, especially at the edge, demand high performance and low power consumption—a challenge for traditional CPUs. This project leverages the hybrid nature of the **Zynq SoC**, which combines two powerful components on a single chip:
 
-System Architecture: How It All Connects
-The PYNQ-Z2 board uses the Zynq SoC, which integrates a processor and an FPGA. Your design leverages both parts to work as a cohesive system.
+* **Processing System (PS):** A dual-core ARM Cortex-A9 processor that acts as the "manager." It runs a full Linux operating system and handles high-level tasks, control flow, and user interaction.
+* **Programmable Logic (PL):** An FPGA fabric that acts as a "custom factory floor." We can design and implement a highly specialized, parallel hardware circuit—our **ZyNet CNN accelerator**—directly on the PL.
 
-Zynq Processing System (PS): The "manager" of the operation. It runs Linux and the PYNQ framework, executing your Python scripts.
+This architecture allows us to offload the computationally-intensive task of AI inference to the custom hardware, freeing up the processor and achieving a massive performance boost.
 
-Programmable Logic (PL): The "custom factory floor" where the hardware acceleration happens. It contains your ZyNet module and an AXI DMA controller.
+---
 
-Communication Busses:
+## 🏛️ System Architecture: A Detailed Look
 
-AXI4-Lite: A lightweight interface used by the PS to send control commands and read results from the ZyNet module's registers.
+The entire system is designed for efficient communication and data flow between the PS and PL, using the industry-standard AXI protocol suite.
 
-AXI4 Stream: A high-speed interface used by the AXI DMA to stream the input image data directly to the ZyNet module, bypassing the processor for maximum efficiency.
 
-The Step-by-Step Python Workflow
-Here is the exact process to load and run your ZyNet accelerator from a Jupyter Notebook on the PYNQ-Z2.
 
-1. Place Your Overlay Files
-First, you must copy your overlay files (your_design.bit and your_design.hwh) onto the PYNQ-Z2 board. Typically, you'll place them in a dedicated directory within the /home/xilinx/pynq/overlays/ folder. This allows the PYNQ framework to discover your design.
+* **The ZyNet CNN Accelerator:** This is our custom IP block implemented in the PL. It receives image data and performs the classification.
+* **AXI DMA Controller:** This is the "automated forklift" of our system. It is responsible for moving large blocks of data (the input image) from the main system memory (DDR) directly to the ZyNet accelerator without involving the processor. This is crucial for high-throughput performance.
+* **AXI4-Stream Interface:** This interface acts as a "high-speed conveyor belt," used by the DMA to stream the pixel data continuously and efficiently to the ZyNet module.
+* **AXI4-Lite Interface:** This interface is the "manager's control panel." It's a lightweight bus used by the PS to configure the ZyNet module, issue commands (like reset), and read the final status and result from its registers.
 
-2. Load the Bitstream onto the FPGA
-In a Jupyter Notebook, the first step is to load your hardware design. This one line of Python code programs the entire FPGA.
+---
 
-Python
+## 🧠 Hardware Deep Dive: Inside the ZyNet Accelerator
 
-from pynq import Overlay
+The ZyNet accelerator is a multi-layer neural network designed specifically for efficient hardware implementation.
 
-# Load the bitstream onto the FPGA's Programmable Logic
-overlay = Overlay('/home/xilinx/pynq/overlays/your_design/your_design.bit')
-After this command executes, the FPGA is no longer a blank slate; it has been physically configured to be your ZyNet CNN accelerator.
+### The Neuron: The Fundamental Building Block
 
-3. Prepare and Send the Input Image
-Next, you'll prepare your input image (e.g., a 28x28 digit) and send it to the hardware using the DMA.
+The network is built from a single, modular neuron design. Each neuron is a self-contained unit with:
+* **Internal Weight & Bias Memory:** Stores the unique parameters learned during training.
+* **Multiplier-Accumulator (MAC) Unit:** Performs the core mathematical operations.
+* **Configurable Activation Function:** Can be instantiated as either ReLU or a Look-Up-Table-based Sigmoid function for efficiency.
 
-Python
 
-from pynq import allocate
-import numpy as np
 
-# 1. Prepare input data (e.g., a flattened 28x28 image)
-#    This should be a NumPy array.
+### Pipelined Architecture
+
+The full network consists of three layers (30, 20, and 10 neurons, respectively) arranged in a **pipelined** structure. This works like a factory assembly line: registers are placed between each layer to hold intermediate results. This allows Layer 1, Layer 2, and Layer 3 to all be processing different data simultaneously, maximizing throughput. A final **Max Finder** unit identifies which of the 10 output neurons has the highest activation to determine the final digit.
+
+### The Core Design Principle: Sequential Setup vs. Parallel Execution
+
+A critical concept in this architecture is the separation of configuration and execution:
+
+1.  **Sequential Configuration:** Before any computation, the ARM processor must load the weights and biases into all 60 neurons. This is a **sequential** process. It uses the **AXI-Lite interface** to access a set of control registers (`layerReg`, `neuronReg`, `weightReg`) and configure each neuron one by one. The registers act as a temporary "mailbox" for loading parameters into each neuron's dedicated internal memory.
+
+2.  **Parallel Execution:** This is where the acceleration happens. When an image is sent for classification, the input data is broadcast to all 30 neurons in the first layer **simultaneously**. Each neuron performs its calculations at the exact same time. This massive parallelism is what makes the hardware accelerator significantly faster than a purely software-based solution.
+
+---
+
+## 🐍 Software Control with PYNQ
+
+The PYNQ framework makes this powerful hardware accessible from easy-to-use Python code running in a Jupyter Notebook.
+
+### The Overlay: Your Hardware as a Python Object
+
+The entire hardware design is packaged as an **overlay**. This consists of:
+* A **`.bit` file:** The bitstream that physically programs the FPGA logic with your ZyNet design.
+* A **`.hwh` file:** A hardware handoff file that acts as a "map" or "user manual". PYNQ parses this file to automatically understand your design's components (like the DMA and ZyNet IP), their memory addresses, and their functions, creating easy-to-use Python objects for them.
+
+### Step-by-Step Deployment on the PYNQ-Z2 Board
+
+The following code demonstrates the end-to-end workflow in a Jupyter Notebook.
+
+#### 1. Load the Hardware Overlay
+
+This command dynamically programs the FPGA with your CNN accelerator. The PYNQ framework streams the `.bit` file to the FPGA's configuration memory.
+# Prepare a flattened 28x28 image as a NumPy array
 input_image = np.array([...], dtype=np.uint8) 
 
-# 2. Allocate a physically contiguous memory buffer for DMA
+# Allocate a contiguous memory buffer for DMA
 input_buffer = allocate(shape=input_image.shape, dtype=np.uint8)
 input_buffer[:] = input_image
 
-# 3. Access the DMA controller from the overlay
+# Access the DMA controller object, which PYNQ created from the HWH file
 dma = overlay.axi_dma_0
 
-# 4. Send the data from the buffer to the ZyNet module
+# Start the DMA transfer from the buffer to the accelerator's stream interface
 dma.sendchannel.transfer(input_buffer)
-dma.sendchannel.wait() # Wait for the transfer to complete
-4. Retrieve the Final Result
-Once the DMA transfer is done, the ZyNet module processes the image. After a brief moment, you can read the final recognized digit directly from the accelerator's output register.
-
-Python
-
-# The output register's address offset, defined in your hardware design
+dma.sendchannel.wait() # Pause execution until the transfer is complete
+# Define the output register's address offset from the hardware design
 OUTPUT_REGISTER_OFFSET = 0x08 
 
-# Access the ZyNet module's control registers via the AXI Lite interface
-zynet_registers = overlay.zynet_0.mmio
+# Access the accelerator's control registers via the MMIO object
+zynet_ip = overlay.zynet_0
+recognized_digit = zynet_ip.mmio.read(OUTPUT_REGISTER_OFFSET)
 
-# Read the 32-bit value from the output register
-recognized_digit = zynet_registers.read(OUTPUT_REGISTER_OFFSET)
+print(f"Recognized Digit: {recognized_digit}")
 
-print(f"The hardware recognized the digit: {recognized_digit}")
-
-# Don't forget to free the buffer when you're done
+# Free the memory buffer to prevent memory leaks
 input_buffer.freebuffer()
+```python
+# Prepare a flattened 28x28 image as a NumPy array
+input_image = np.array([...], dtype=np.uint8) 
+
+# Allocate a contiguous memory buffer for DMA
+input_buffer = allocate(shape=input_image.shape, dtype=np.uint8)
+input_buffer[:] = input_image
+
+# Access the DMA controller object, which PYNQ created from the HWH file
+dma = overlay.axi_dma_0
+
+# Start the DMA transfer from the buffer to the accelerator's stream interface
+dma.sendchannel.transfer(input_buffer)
+dma.sendchannel.wait() # Pause execution until the transfer is complete
+from pynq import Overlay, allocate
+import numpy as np
+
+# Load the bitstream onto the FPGA. PYNQ parses the HWH file automatically.
+overlay = Overlay('path/to/your_design/zynet.bit')
