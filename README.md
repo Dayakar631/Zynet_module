@@ -1,4 +1,5 @@
 # End-to-End Design of a Hardware-Accelerated CNN on a Zynq SoC
+"For this project, I developed a 5-layer neural network based on the ZyNet framework , which is an excellent open-source IP "ZYNET" developed  by Vipin Kizhepatt. It was a fantastic foundation for me to practically explore the challenges of mapping a network to an FPGA."
 
 This repository documents the complete design, training, verification, and deployment of a custom Convolutional Neural Network (CNN) hardware accelerator on a Xilinx Zynq-7000 SoC. The system is architected for high-performance, low-latency handwritten digit recognition and is controlled by the user-friendly PYNQ (Python Productivity for Zynq) framework, enabling seamless software-hardware interaction.
 
